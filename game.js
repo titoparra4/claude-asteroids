@@ -62,6 +62,15 @@ const RADII  = [0, 16, 30, 50];   // por tamaño 1, 2, 3
 const SPEEDS = [0, 85, 55, 32];   // velocidad base por tamaño
 const POINTS = [0, 100, 50, 20];  // puntos por tamaño
 
+// Disparo triple (power-up)
+const TRIPLE_SHOT_DURATION = 10;    // segundos de duración
+const TRIPLE_SHOT_SPREAD   = 0.17;  // ~10° de apertura por bala lateral
+const TRIPLE_SHOT_CHANCE   = 0.2;   // prob. de activarse al destruir un asteroide (una vez por nivel)
+
+// Escudo temporal (power-up)
+const SHIELD_DURATION       = 5;  // segundos de duración (o hasta absorber un golpe)
+const SHIELD_KILLS_REQUIRED = 2;  // asteroides a destruir para activarlo (una vez por nivel)
+
 class Asteroid {
   constructor(x, y, size = 3) {
     this.x    = x;
@@ -165,6 +174,14 @@ class Ship {
     const NOSE = 21;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
+
+    if (tripleShotTimer > 0) {
+      return [
+        new Bullet(ox, oy, this.angle - TRIPLE_SHOT_SPREAD),
+        new Bullet(ox, oy, this.angle),
+        new Bullet(ox, oy, this.angle + TRIPLE_SHOT_SPREAD),
+      ];
+    }
     return [new Bullet(ox, oy, this.angle)];
   }
 
@@ -196,6 +213,15 @@ class Ship {
       ctx.lineTo(-8 - rand(6, 14), 0);
       ctx.lineTo(-8,  4);
       ctx.strokeStyle = 'rgba(255, 130, 0, 0.85)';
+      ctx.stroke();
+    }
+
+    // Escudo temporal
+    if (shieldTimer > 0) {
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius + 8, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0, 200, 255, 0.8)';
+      ctx.lineWidth   = 2;
       ctx.stroke();
     }
 
@@ -240,6 +266,8 @@ let ship, bullets, asteroids, particles;
 let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
+let tripleShotTimer, tripleShotUsed;
+let shieldTimer, shieldUsed, shieldKillCount;
 
 function spawnAsteroids(count) {
   const SAFE_DIST = 130;
@@ -262,13 +290,21 @@ function initGame() {
   lives  = 3;
   level  = 1;
   state  = 'playing';
+  tripleShotTimer = 0;
+  tripleShotUsed  = false;
+  shieldTimer     = 0;
+  shieldUsed      = false;
+  shieldKillCount = 0;
   spawnAsteroids(4);
 }
 
 function nextLevel() {
   level++;
-  bullets   = [];
-  particles = [];
+  bullets         = [];
+  particles       = [];
+  tripleShotUsed  = false;
+  shieldUsed      = false;
+  shieldKillCount = 0;
   ship.reset();
   spawnAsteroids(3 + level);
 }
@@ -312,6 +348,9 @@ function update(dt) {
     bullets.push(...ship.tryShoot());
   }
 
+  if (tripleShotTimer > 0) tripleShotTimer -= dt;
+  if (shieldTimer     > 0) shieldTimer     -= dt;
+
   ship.update(dt);
   bullets.forEach(b => b.update(dt));
   asteroids.forEach(a => a.update(dt));
@@ -330,6 +369,19 @@ function update(dt) {
         score += POINTS[a.size];
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
+
+        if (!tripleShotUsed && Math.random() < TRIPLE_SHOT_CHANCE) {
+          tripleShotUsed  = true;
+          tripleShotTimer = TRIPLE_SHOT_DURATION;
+        }
+
+        if (!shieldUsed) {
+          shieldKillCount++;
+          if (shieldKillCount >= SHIELD_KILLS_REQUIRED) {
+            shieldUsed  = true;
+            shieldTimer = SHIELD_DURATION;
+          }
+        }
       }
     }
   }
@@ -340,7 +392,16 @@ function update(dt) {
   if (ship.invincible <= 0) {
     for (const a of asteroids) {
       if (dist(ship, a) < ship.radius + a.radius * 0.82) {
-        killShip();
+        if (shieldTimer > 0) {
+          shieldTimer = 0;
+          a.dead = true;
+          score += POINTS[a.size];
+          explode(a.x, a.y, a.size * 5);
+          asteroids = asteroids.filter(x => !x.dead).concat(a.split());
+          ship.invincible = 0.6; // evita que los fragmentos, que nacen sobre la nave, la maten al instante
+        } else {
+          killShip();
+        }
         break;
       }
     }
@@ -374,6 +435,16 @@ function drawHUD() {
 
   ctx.textAlign = 'left';
   ctx.fillText(`SCORE  ${score}`, 14, 26);
+
+  let powerUpY = 46;
+  if (tripleShotTimer > 0) {
+    ctx.fillText(`DISPARO TRIPLE ${Math.ceil(tripleShotTimer)}s`, 14, powerUpY);
+    powerUpY += 20;
+  }
+  if (shieldTimer > 0) {
+    ctx.fillText(`ESCUDO ${Math.ceil(shieldTimer)}s`, 14, powerUpY);
+    powerUpY += 20;
+  }
 
   ctx.textAlign = 'center';
   ctx.fillText(`NIVEL ${level}`, W / 2, 26);
